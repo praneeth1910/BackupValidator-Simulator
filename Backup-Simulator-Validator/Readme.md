@@ -1,163 +1,113 @@
-# 🚀 Smart Backup Validator & Simulator for Linux Systems
+# 📘 Project Documentation: Smart Backup Validator & Simulator
 
-A developer-focused system tool that helps simulate, validate, and track backup integrity for Linux file systems. This project empowers devs and sysadmins to build resilient backup workflows through file metadata analysis, API-driven validation, and system-aware infrastructure practices.
+## Overview
 
----
+This project is a robust backup snapshot tracking system that operates via a CLI agent and a cloud-based FastAPI backend. It supports:
 
-## 🔧 Project Goals
-
-1. **Monitor System File State**
-   - Traverse Linux directories and collect file metadata (size, mtime, inode, checksum)
-   - Support filters and CLI arguments for flexible scanning
-
-2. **Store & Version Backup Snapshots**
-   - Upload snapshots to a FastAPI backend
-   - Store in PostgreSQL with timestamped versioning
-
-3. **On-Demand Access to Snapshots**
-   - Expose REST APIs for:
-     - Latest snapshot
-     - Historical views
-     - File-specific search
-
-4. **Comparison & Drift Detection**
-   - CLI agent compares local scan to last known snapshot
-   - Highlights missing, added, or modified files
-   - Optionally detects hash mismatch or corruption
-
-5. **Deployment & Infra Optimizations**
-   - Fully containerized via Docker & Compose
-   - CI/CD pipeline for linting, tests, and builds
-   - Cloud deployment guides for AWS/GCP (free-tier friendly)
-
-6. **(Bonus) Failure Simulation**
-   - Test backup failure modes (e.g., lost files, missed updates)
-   - Helps validate alerting and client logic
-
-7. **(Optional) Alerting & Monitoring**
-   - Webhook or CLI alerts on drift or snapshot failure
-   - Prometheus metrics for backup agent status
+* Real-time or scheduled scanning of backupsets
+* Snapshot generation, storage, and upload
+* Backupset validation and history tracking
+* Designed for extensibility with databases, cloud auth, and efficient diffing
 
 ---
 
-## 💡 Motivation
+## 🔧 CLI Agent
 
-Backups silently fail more often than we realize — files drift, schedules break, integrity assumptions go unchecked. This project exists to build **developer tooling** around backup observability and make validation an active part of system health.
+### Key Features:
 
----
+* Scans files/directories defined in a user-provided **backupset file**
+* Generates metadata-rich snapshot JSON files
+* Stores them under `Snapshots/<machine_id>/<backupset_name>/<timestamp>.json`
+* Posts snapshots to the server (optionally)
 
-## 🧱 Tech Stack
+### Snapshot Structure (JSON)
 
-| Component       | Tech Used                          |
-|------------------|------------------------------------|
-| CLI Agent        | Python (argparse, pathlib, hashlib)|
-| Backend API      | FastAPI + PostgreSQL               |
-| Containerization | Docker, Docker Compose             |
-| CI/CD            | GitHub Actions                     |
-| Deployment       | GCP / AWS Free Tier (VM or Docker) |
-| Optional Metrics | Prometheus + Grafana               |
-
----
-
-## 📁 Folder Structure (Planned)
-
-smart-backup-validator/
-├── agent/ # Python CLI backup simulator
-│ └── simulator.py
-├── backend/
-│ ├── main.py # FastAPI app
-│ ├── models.py
-│ └── routes/
-├── snapshots/ # Sample scan outputs / test fixtures
-├── tests/ # Unit/integration tests
-├── docker-compose.yml
-├── Dockerfile.backend
-├── Dockerfile.agent
-└── README.md
-
----
-
-## 🔄 Planned API Endpoints
-
-| Method | Endpoint                     | Purpose                               |
-|--------|------------------------------|---------------------------------------|
-| GET    | `/backupsets/{id}`           | Get latest snapshot                   |
-| POST   | `/backupsets/{id}`           | Upload new snapshot                   |
-| GET    | `/backupsets/{id}/history`   | List past snapshots                   |
-| GET    | `/backupsets/{id}/diff`      | Compare with previous snapshot        |
+```json
+{
+  "snapshot_id": "<optional-sha256>",
+  "timestamp": "2025-06-23T10:33:21",
+  "machine_id": "devbox-001",
+  "backupset_name": "project-data",
+  "summary": {
+    "file_count": 1243,
+    "total_size": 89072342,
+    "error_count": 2
+  },
+  "files": [
+    {
+      "path": "/home/user/foo.txt",
+      "size": 1024,
+      "mtime": 1729493434.33,
+      "inode": 123456,
+      "checksum": "abc123...",
+      "error": null
+    }
+  ]
+}
+```
 
 ---
 
-## ✅ How to Use (Eventually)
+## 🌐 API Backend (FastAPI)
 
-```bash
-# Scan a folder and upload snapshot
-$ python3 simulator.py /home/user/data --upload
+### RESTful Endpoints
 
-# Compare current scan to last backup
-$ python3 simulator.py /home/user/data --compare
+| Method | Endpoint                                                     | Purpose                           |
+| ------ | ------------------------------------------------------------ | --------------------------------- |
+| GET    | `/machines/{machine_id}/backupsets`                          | List backupsets on machine        |
+| GET    | `/machines/{machine_id}/backupsets/{set_name}`               | List snapshots in that backupset  |
+| GET    | `/machines/{machine_id}/backupsets/{set_name}/latest`        | Get latest snapshot               |
+| GET    | `/machines/{machine_id}/backupsets/{set_name}/{snapshot_id}` | Get specific snapshot             |
+| GET    | `/machines/{machine_id}/backupsets/{set_name}/query?...`     | Filter snapshots by time/hash/etc |
+| POST   | `/machines/{machine_id}/backupsets/{set_name}/validate`      | Validate/reserve backupset name   |
+| POST   | `/machines/{machine_id}/backupsets/{set_name}`               | Upload a new snapshot             |
 
-# Get snapshot from API
-$ curl http://localhost:8000/backupsets/my-machine
+### DB Schema Sketch
 
+#### `backupsets`
+
+```sql
+machine_id TEXT,
+backupset_name TEXT,
+created_at TIMESTAMP,
+description TEXT,
+PRIMARY KEY (machine_id, backupset_name)
+```
+
+#### `snapshots`
+
+```sql
+snapshot_id TEXT,
+timestamp TIMESTAMP,
+machine_id TEXT,
+backupset_name TEXT,
+summary JSONB,
+files JSONB
+```
 
 ---
-## 🏗️ Architecture Overview
 
-          +--------------------+
-          |   Linux System A   |
-          | (User Workstation) |
-          +--------------------+
-                   |
-                   | (1) Scan filesystem
-                   |     & collect metadata
-                   v
-          +--------------------+
-          |   CLI Agent        |  ← Python (simulator.py)
-          | - Hashing          |
-          | - Inode tracking   |
-          | - Snapshot version |
-          +--------------------+
-                   |
-                   | (2) Upload snapshot
-                   v
-        ┌─────────────────────────────┐
-        │        Backend API          │  ← FastAPI
-        │   - Receives snapshots      │
-        │   - Provides diff/compare   │
-        │   - Manages snapshot history│
-        └────────────┬────────────────┘
-                     |
-                     | (3) Store data
-                     v
-            +-------------------+
-            |   PostgreSQL DB   |
-            | - snapshot table  |
-            | - file meta table |
-            +-------------------+
-                     |
-        ┌────────────┴────────────┐
-        │                         │
-        ▼                         ▼
-(4) Comparison API        (5) Alert/Drift Checks
-   /backupsets/diff           (CLI or dashboard)
+## 🔐 Auth (Future)
 
-## Deployement
-+----------------------------+
-|        Docker Host         |
-+----------------------------+
-|                            |
-|  [FastAPI Container]       |
-|  [PostgreSQL Container]    |
-|  [Optional: Prometheus]    |
-|                            |
-+----------------------------+
+* Add user management (username + API key)
+* Restrict machines to owner user
+* Protect endpoints with header auth (`X-API-Key` or JWT)
 
-+----------------------------+
-|  Linux Client Machines     |
-+----------------------------+
-|  CLI agent in user space   |
-|  Runs via cron/systemd     |
-+----------------------------+
+---
 
-[ All containers managed via Docker Compose ]
+## 📌 Future Enhancements
+
+* Snapshot ID hashing
+* Efficient diffing with historical snapshots
+* Duplicate file detection by hash
+* Time-range querying & version rollback
+* Web dashboard integration
+
+---
+
+## 🚀 Next Milestone
+
+* [ ] Add backupset validation API
+* [ ] Create registry tables/models
+* [ ] Modify CLI agent to validate before snapshot upload
+* [ ] Unit tests for snapshot structure and endpoint behavior
